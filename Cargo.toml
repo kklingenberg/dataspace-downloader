@@ -1,0 +1,21 @@
+[package]
+name = "dataspace-downloader"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.98"
+aws-credential-types = { version = "1.2.3", features = ["hardcoded-credentials"] }
+aws-sdk-s3 = "1.92.0"
+aws-types = "1.3.7"
+clap = { version = "4.5.40", features = ["derive", "env"] }
+futures = "0.3.31"
+geo-types = "0.7.16"
+geojson = "0.24.2"
+reqwest = { version = "0.12.20", features = ["charset", "http2", "json", "rustls-tls", "system-proxy"], default-features = false }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+tokio = { version = "1.45.1", features = ["full"] }
+tracing = { version = "0.1.41", features = ["log"] }
+tracing-subscriber = { version = "0.3.19", default-features = false, features = ["fmt"] }
+wkt = "0.14.0"
