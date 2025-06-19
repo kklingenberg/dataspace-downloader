@@ -16,7 +16,11 @@ use wkt::to_wkt::ToWkt;
 #[derive(Parser)]
 #[command(version, about)]
 struct Cli {
-    /// Configuration file (credentials, query parameters)
+    /// Keys file
+    #[arg(short, long, env)]
+    keys_file: Option<PathBuf>,
+
+    /// Configuration file (query parameters)
     #[arg(short, long, env)]
     config: Option<PathBuf>,
 
@@ -49,19 +53,19 @@ fn default_s3_endpoint() -> String {
     String::from("https://eodata.dataspace.copernicus.eu/")
 }
 
-/// S3 configuration block
+/// S3 keys configuration block
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct S3Configuration {
+struct KeysConfiguration {
     #[serde(default = "default_s3_endpoint")]
     endpoint_url: String,
     access_key_id: String,
     secret_access_key: String,
 }
 
-impl Default for S3Configuration {
+impl Default for KeysConfiguration {
     fn default() -> Self {
-        S3Configuration {
+        KeysConfiguration {
             endpoint_url: default_s3_endpoint(),
             access_key_id: String::from("not-set"),
             secret_access_key: String::from("not-set"),
@@ -83,7 +87,7 @@ struct Configuration {
     query: serde_json::Map<String, serde_json::Value>,
 
     #[serde(default)]
-    s3: S3Configuration,
+    glob_patterns: Vec<String>,
 }
 
 impl Default for Configuration {
@@ -92,7 +96,7 @@ impl Default for Configuration {
             endpoint_url: default_opensearch_endpoint(),
             collection: None,
             query: serde_json::Map::<String, serde_json::Value>::default(),
-            s3: S3Configuration::default(),
+            glob_patterns: Vec::default(),
         }
     }
 }
@@ -116,6 +120,16 @@ async fn main() -> Result<()> {
         .with_target(false)
         .without_time()
         .init();
+
+    let keys: KeysConfiguration = cli.keys_file.map_or_else(
+        || Ok(KeysConfiguration::default()),
+        |path| {
+            let file = File::open(&path)
+                .with_context(|| format!("Couldn't open keys file {}", path.display()))?;
+            let reader = BufReader::new(file);
+            serde_json::from_reader(reader).context("Keys file is not properly JSON-encoded")
+        },
+    )?;
 
     let config: Configuration = cli.config.map_or_else(
         || Ok(Configuration::default()),
@@ -155,21 +169,32 @@ async fn main() -> Result<()> {
     }
 
     let storage_client = storage::StorageClient::init(
-        config.s3.endpoint_url,
-        config.s3.access_key_id,
-        config.s3.secret_access_key,
+        keys.endpoint_url,
+        keys.access_key_id,
+        keys.secret_access_key,
         cli.output.unwrap_or(PathBuf::from(".")),
+        config.glob_patterns,
     );
     futures::stream::iter(products.into_iter().map(|product| {
         let client = storage_client.clone();
-        tokio::spawn(async move { client.download(product.properties.product_identifier).await })
+        tokio::spawn(async move {
+            client
+                .download_product(product.properties.product_identifier)
+                .await
+        })
     }))
     .buffer_unordered(5)
     .map(|result| match result {
-        Ok(Ok(path)) => println!("Downloaded {}", path.display()),
-        anything_else => println!("Couldn't download collection item: {:?}", anything_else),
+        Ok(Ok(paths)) => paths,
+        anything_else => {
+            println!("Couldn't download collection item: {:?}", anything_else);
+            Vec::new()
+        }
     })
     .collect::<Vec<_>>()
-    .await;
+    .await
+    .iter()
+    .flatten()
+    .for_each(|path| println!("Downloaded {}", path.display()));
     Ok(())
 }
