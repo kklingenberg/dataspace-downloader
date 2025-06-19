@@ -7,19 +7,21 @@ use aws_sdk_s3::{
     config::{AppName, BehaviorVersion},
 };
 use aws_types::region::Region;
+use glob::Pattern;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::{
     fs::{File, create_dir_all},
     io::copy,
 };
+use tracing::{info, warn};
 
 /// Storage client instance capable of downloading
 #[derive(Clone)]
 pub struct StorageClient {
     s3_client: Arc<Client>,
     target: Arc<PathBuf>,
-    glob_patterns: Arc<Vec<String>>,
+    glob_patterns: Arc<Vec<Pattern>>,
 }
 
 impl StorageClient {
@@ -29,7 +31,7 @@ impl StorageClient {
         access_key_id: String,
         secret_access_key: String,
         target: PathBuf,
-        glob_patterns: Vec<String>,
+        glob_patterns: Vec<Pattern>,
     ) -> Self {
         let credentials = Credentials::from_keys(access_key_id, secret_access_key, None);
         let config = Config::builder()
@@ -49,12 +51,65 @@ impl StorageClient {
     }
 
     /// Download all parts of a product that match glob patterns onto disk
-    pub async fn download_product(&self, key: String) -> Result<Vec<PathBuf>> {
-        Ok(vec![])
+    pub async fn download_product(&self, key: &str) -> Result<Vec<PathBuf>> {
+        let mut downloaded = Vec::new();
+        let mut prefix_key = key
+            .split('/')
+            .rev()
+            .skip(1)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join("/");
+        prefix_key.push('/');
+        for leaf_key in self.list_subkeys(key).await? {
+            if !self.glob_patterns.is_empty()
+                && !self.glob_patterns.iter().any(|p| p.matches(&leaf_key))
+            {
+                info!("Skipping key {}", leaf_key);
+                continue;
+            }
+            info!("Downloading key {}", leaf_key);
+            match self.download(&leaf_key, &prefix_key).await {
+                Ok(path) => downloaded.push(path),
+                anything_else => warn!("Couldn't download key {}: {:?}", leaf_key, anything_else),
+            };
+        }
+        Ok(downloaded)
+    }
+
+    /// List all keys within the given key
+    async fn list_subkeys(&self, key: &str) -> Result<Vec<String>> {
+        // Keys start with a forward slash and the bucket name
+        // If not, abort the operation
+        let bucket = key.split('/').nth(1).ok_or(anyhow!(
+            "Product key isn't properly structured (missing bucket): {}",
+            key
+        ))?;
+        let prefix = format!("{}/", key.split('/').skip(2).collect::<Vec<_>>().join("/"));
+        let response = self
+            .s3_client
+            .list_objects_v2()
+            .bucket(bucket)
+            .prefix(&prefix)
+            .send()
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to list keys under {:?} in bucket {:?}",
+                    prefix, bucket
+                )
+            })?;
+        Ok(response
+            .contents()
+            .iter()
+            .flat_map(|o| Some(format!("/{}/{}", bucket, o.key.as_ref()?)))
+            .collect::<Vec<_>>())
     }
 
     /// Download an object onto disk
-    async fn download(&self, key: String, relative_to: String) -> Result<PathBuf> {
+    async fn download(&self, key: &str, relative_to: &str) -> Result<PathBuf> {
         // Keys start with a forward slash and the bucket name
         // If not, abort the download
         let bucket = key.split('/').nth(1).ok_or(anyhow!(
@@ -63,7 +118,7 @@ impl StorageClient {
         ))?;
         let real_key = key.split('/').skip(2).collect::<Vec<_>>().join("/");
         let relative_local_folder = key
-            .strip_prefix(&relative_to)
+            .strip_prefix(relative_to)
             .ok_or_else(|| anyhow!("Key {} is not relative to {}", key, relative_to))?
             .split('/')
             .rev()

@@ -6,6 +6,7 @@ use clap::Parser;
 use futures::StreamExt;
 use geo_types::Geometry;
 use geojson::GeoJson;
+use glob::Pattern;
 use serde::Deserialize;
 use std::fs::File;
 use std::io::BufReader;
@@ -173,13 +174,17 @@ async fn main() -> Result<()> {
         keys.access_key_id,
         keys.secret_access_key,
         cli.output.unwrap_or(PathBuf::from(".")),
-        config.glob_patterns,
+        config
+            .glob_patterns
+            .iter()
+            .map(|p| Pattern::new(p).with_context(|| format!("Couldn't build glob pattern: {}", p)))
+            .collect::<Result<Vec<_>>>()?,
     );
     futures::stream::iter(products.into_iter().map(|product| {
         let client = storage_client.clone();
         tokio::spawn(async move {
             client
-                .download_product(product.properties.product_identifier)
+                .download_product(&product.properties.product_identifier)
                 .await
         })
     }))
