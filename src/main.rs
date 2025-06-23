@@ -2,7 +2,7 @@ mod catalog;
 mod storage;
 
 use anyhow::{Context, Result, anyhow};
-use clap::Parser;
+use clap::{Parser, value_parser};
 use futures::StreamExt;
 use geo_types::Geometry;
 use geojson::GeoJson;
@@ -17,7 +17,19 @@ use wkt::to_wkt::ToWkt;
 #[derive(Parser)]
 #[command(version, about)]
 struct Cli {
-    /// Keys file
+    /// S3 endpoint URL, which defaults to https://eodata.dataspace.copernicus.eu/
+    #[arg(long, env)]
+    s3_endpoint_url: Option<String>,
+
+    /// S3 access key id
+    #[arg(long, env)]
+    s3_access_key_id: Option<String>,
+
+    /// S3 secret_access key
+    #[arg(long, env)]
+    s3_secret_access_key: Option<String>,
+
+    /// Keys file, optional; must be given if keys are not given inline
     #[arg(short, long, env)]
     keys_file: Option<PathBuf>,
 
@@ -33,6 +45,10 @@ struct Cli {
     /// to current directory
     #[arg(short, long, env)]
     output: Option<PathBuf>,
+
+    /// Number of products to download in parallel
+    #[arg(short, long, env, default_value_t = 5, value_parser = value_parser!(u16).range(1..))]
+    parallelism: u16,
 
     /// Skip downloading, only list results
     #[arg(long, action)]
@@ -170,9 +186,9 @@ async fn main() -> Result<()> {
     }
 
     let storage_client = storage::StorageClient::init(
-        keys.endpoint_url,
-        keys.access_key_id,
-        keys.secret_access_key,
+        cli.s3_endpoint_url.unwrap_or(keys.endpoint_url),
+        cli.s3_access_key_id.unwrap_or(keys.access_key_id),
+        cli.s3_secret_access_key.unwrap_or(keys.secret_access_key),
         cli.output.unwrap_or(PathBuf::from(".")),
         config
             .glob_patterns
