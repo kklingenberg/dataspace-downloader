@@ -5,6 +5,21 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 use tracing::info;
 
+/// Feature collection link
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionLink {
+    pub rel: String,
+    pub href: String,
+}
+
+/// Feature collection properties
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeatureCollectionProperties {
+    pub links: Vec<CollectionLink>,
+}
+
 /// A query result obtained from OpenSearch
 #[derive(Deserialize)]
 pub struct Product {
@@ -20,6 +35,7 @@ pub struct ProductProperties {
 
 #[derive(Deserialize)]
 struct Response {
+    properties: FeatureCollectionProperties,
     features: Vec<Product>,
 }
 
@@ -28,6 +44,7 @@ pub async fn query(
     endpoint_url: String,
     collection: Option<String>,
     query: Map<String, Value>,
+    depaginate: bool,
     geometry: Option<String>,
 ) -> Result<Vec<Product>> {
     let url = if let Some(collection_id) = collection {
@@ -60,7 +77,7 @@ pub async fn query(
     );
 
     let client = reqwest::Client::new();
-    let response: Response = client
+    let mut response: Response = client
         .get(url)
         .query(&parameters)
         .send()
@@ -68,6 +85,21 @@ pub async fn query(
         .json()
         .await?;
 
-    info!("Results: {}", response.features.len());
-    Ok(response.features)
+    let mut result_count = response.features.len();
+    info!("Results: {}", result_count);
+    let mut products = response.features;
+    while let (true, Some(link)) = (
+        depaginate,
+        response
+            .properties
+            .links
+            .into_iter()
+            .find(|link| link.rel == "next"),
+    ) {
+        response = client.get(link.href).send().await?.json().await?;
+        result_count = result_count.saturating_add(response.features.len());
+        info!("Results: {}", result_count);
+        products.append(&mut response.features);
+    }
+    Ok(products)
 }

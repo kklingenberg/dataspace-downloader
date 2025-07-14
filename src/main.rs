@@ -104,6 +104,9 @@ struct Configuration {
     query: serde_json::Map<String, serde_json::Value>,
 
     #[serde(default)]
+    depaginate: bool,
+
+    #[serde(default)]
     glob_patterns: Vec<String>,
 }
 
@@ -113,6 +116,7 @@ impl Default for Configuration {
             endpoint_url: default_opensearch_endpoint(),
             collection: None,
             query: serde_json::Map::<String, serde_json::Value>::default(),
+            depaginate: false,
             glob_patterns: Vec::default(),
         }
     }
@@ -175,6 +179,7 @@ async fn main() -> Result<()> {
         config.endpoint_url,
         config.collection,
         config.query,
+        config.depaginate,
         geometry,
     )
     .await?;
