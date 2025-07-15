@@ -67,6 +67,7 @@ the following fields:
   "query": {
     "fields": "used-to-filter-elements"
   },
+  "depaginate": false,
   "globPatterns": ["**/*.jp2", "other-filters"]
 }
 ```
@@ -75,6 +76,9 @@ The `query` field maps to whichever parameter can be used to filter the results
 on DataSpace's end. For example, for the `Sentinel1` collection, the query
 fields are described
 [here](https://catalogue.dataspace.copernicus.eu/resto/api/collections/Sentinel1/describe.xml).
+
+The `depaginate` field defaults to `false` and if set to `true` will cause the
+downloader to "uncoil" the results in pages.
 
 The `globPatterns` are filters that apply over the contents of each product
 matched by the `query`. Each pattern is joined with the others with _OR_,
